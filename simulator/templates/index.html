@@ -36,35 +36,97 @@
 </div>
 
 <script>
-    document.getElementById('simulationForm').addEventListener('submit', function(e) {
-        e.preventDefault();
+document.getElementById('simulationForm').addEventListener('submit', function(e) {
+    e.preventDefault();
 
-        const payload = {
-            expected_delay_I2: document.getElementById('expectedI2').value,
-            expected_delay_I3: document.getElementById('expectedI3').value,
-            accel_list: document.getElementById('accelList').value.split(',').map(v => v.trim()),
-            tau_list: document.getElementById('tauList').value.split(',').map(v => v.trim()),
-            startup_delay_list: document.getElementById('startupDelayList').value.split(',').map(v => v.trim())
-        };
+    const payload = {
+        expected_delay_I2: document.getElementById('expectedI2').value,
+        expected_delay_I3: document.getElementById('expectedI3').value,
+        accel_list: document.getElementById('accelList').value.split(',').map(v => v.trim()),
+        tau_list: document.getElementById('tauList').value.split(',').map(v => v.trim()),
+        startup_delay_list: document.getElementById('startupDelayList').value.split(',').map(v => v.trim())
+    };
 
-        fetch('/submit_permutations', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        })
+    const resultsDiv = document.getElementById('results');
+    resultsDiv.innerHTML = `<div class='alert alert-info'>Submitting job...</div>`;
+
+    fetch('/submit_permutations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.status === 'started') {
+            const execId = data.execution_batch_id;
+            const total = data.total_permutations;
+
+            resultsDiv.innerHTML = `
+                <div class='alert alert-success'>
+                    <strong>Execution ID:</strong> ${execId}<br>
+                    Total permutations: ${total}<br>
+                    <span class='text-primary' id='exec-status'>Execution in progress...</span>
+                </div>`;
+
+            // Begin polling every 10 seconds
+            pollForResults(execId, total);
+        } else {
+            resultsDiv.innerHTML = `<div class='alert alert-danger'>Error: ${data.message}</div>`;
+        }
+    })
+    .catch(err => {
+        resultsDiv.innerHTML = `<div class='alert alert-danger'>Unexpected error: ${err.message}</div>`;
+    });
+});
+
+function pollForResults(executionId, expectedCount) {
+    const statusSpan = document.getElementById('exec-status');
+    let attempts = 0;
+    const maxAttempts = 200;
+    const intervalMs = 10000; // 10 seconds
+
+    const interval = setInterval(() => {
+        attempts++;
+        if (attempts > maxAttempts) {
+            clearInterval(interval);
+            statusSpan.innerHTML = `<span class="text-danger">Polling timed out after ${maxAttempts * intervalMs / 60000} minutes.</span>`;
+            return;
+        }
+
+        fetch(`/execution-results/${executionId}`)
         .then(res => res.json())
         .then(data => {
-            const resultsDiv = document.getElementById('results');
-            if (data.status === 'success') {
-                resultsDiv.innerHTML = `<div class='alert alert-success'>Successfully generated ${data.total_permutations} permutations.</div>`;
+            const actualCount = Object.keys(data.status || {}).length;
+            if (actualCount >= expectedCount) {
+                clearInterval(interval);
+                statusSpan.innerHTML = `All ${actualCount} simulations completed. Fetching best result...`;
+                fetchWinner(executionId);
             } else {
-                resultsDiv.innerHTML = `<div class='alert alert-danger'>Error: ${data.message}</div>`;
+                statusSpan.innerHTML = `Waiting for ${expectedCount - actualCount} simulations... (${attempts}/${maxAttempts})`;
             }
         })
         .catch(err => {
-            document.getElementById('results').innerHTML = `<div class='alert alert-danger'>Unexpected error: ${err.message}</div>`;
+            console.error("Polling error:", err);
         });
-    });
+    }, intervalMs);
+}
+
+function fetchWinner(executionId) {
+    fetch(`/execution-results/${executionId}/winner`)
+        .then(res => res.json())
+        .then(data => {
+            const winner = data.result || {};
+            document.getElementById('exec-status').innerHTML = `
+                <div class='mt-3'>
+                    <strong>Best Permutation:</strong> ${data.best_permutation}<br>
+                    <strong>Total Error:</strong> ${data.total_error}<br>
+                    <strong>Accel:</strong> ${winner.accel}<br>
+                    <strong>Tau:</strong> ${winner.tau}<br>
+                    <strong>Startup Delay:</strong> ${winner.startupDelay}<br>
+                    <strong>Intersection Delays:</strong> I2=${winner.intersection_avg_delays?.I2}, I3=${winner.intersection_avg_delays?.I3}
+                </div>`;
+        });
+}
 </script>
 </body>
 </html>

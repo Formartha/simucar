@@ -4,47 +4,44 @@ import uuid
 # Store results per execution UUID
 execution_results = {}
 
-# Track job completion status
-execution_status = {}
 
-
-def launch_simulation_job(accel, tau, startup_delay, execution_id):
-    container_name = f"sim_worker_{execution_id}"
-    cmd = [
-        "docker", "run", "--rm",
-        "--name", container_name,
-        "-e", f"ACCEL={accel}",
-        "-e", f"TAU={tau}",
-        "-e", f"STARTUP_DELAY={startup_delay}",
-        "-e", f"EXECUTION_ID={execution_id}",
-        "simulation-worker-image"
-    ]
+def launch_simulation_job(accel, tau, startup_delay, execution_id, l2_delay, l3_delay):
+    container_name = f"sim_worker_{execution_id}_{uuid.uuid4()}"
+    cmd = (
+        f"docker run --rm "
+        f"--name {container_name} "
+        f"-e ACCEL={accel} "
+        f"-e TAU={tau} "
+        f"-e STARTUP_DELAY={startup_delay} "
+        f"-e EXPECTED_L2_DELAY={l2_delay} "
+        f"-e EXPECTED_L3_DELAY={l3_delay} "
+        f"-e EXECUTION_ID={execution_id} "
+        f"-e MASTER_HOST=http://host.docker.internal:5002 "
+        f"sumo-worker:latest"
+    )
 
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
-        execution_status[execution_id] = 'completed'
-    except subprocess.CalledProcessError as e:
-        execution_status[execution_id] = 'failed'
-        execution_results[execution_id] = {"error": e.stderr}
+        subprocess.Popen(cmd, shell=True)
+    except Exception as e:
+        execution_results[execution_id] = {"error": str(e)}
 
 
-def start_simulation_batch(permutations):
-    batch_id = uuid.uuid4().hex
-    for accel, tau, startup_delay in permutations:
-        execution_id = uuid.uuid4().hex
-        execution_status[execution_id] = 'running'
-        launch_simulation_job(accel, tau, startup_delay, execution_id)
-    return batch_id
+def start_simulation_batch(permutations, execution_id):
+    for accel, tau, startup_delay, l2_delay, l3_delay in permutations:
+        launch_simulation_job(accel, tau, startup_delay, execution_id, l2_delay, l3_delay)
 
 
-def get_execution_status():
-    return execution_status
+def submit_result_to_engine(execution_id, permutation_id, result):
+    if execution_id not in execution_results:
+        execution_results[execution_id] = {}
+    execution_results[execution_id][permutation_id] = result
 
 
-def submit_result_to_engine(execution_id, result):
-    execution_results[execution_id] = result
-    execution_status[execution_id] = 'completed'
-
-
-def get_all_results():
-    return execution_results
+def ensure_float(value):
+    if not isinstance(value, float):
+        try:
+            value = float(value)
+        except (ValueError, TypeError):
+            print(f"Cannot convert {value} to float.")
+            return None
+    return value

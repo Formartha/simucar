@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    image: sumo-worker:latest
+    container_name: sumo_worker
+    networks:
+      - simnet
+    environment:
+      - ACCEL=1.5
+      - TAU=1.0
+      - STARTUP_DELAY=0.5
+      - EXPECTED_L2_DELAY=3.0
+      - EXPECTED_L3_DELAY=5.0
+      - EXECUTION_ID=test123
+      - MASTER_HOST=http://simulator:5002
+    # Remove the line below to auto-start worker as well
+    deploy:
+      replicas: 0  # Prevents it from starting unless you run it manually
+
+  simulator:
+    build:
+      context: ./simulator
+      dockerfile: Dockerfile
+    image: sumo-simulator:latest
+    container_name: sumo_simulator
+    networks:
+      - simnet
+    ports:
+      - "5002:5002"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+networks:
+  simnet:
+    driver: bridge
